@@ -71,7 +71,7 @@ from synapse.replication.http.federation import (
     ReplicationStoreRoomOnOutlierMembershipRestServlet,
 )
 from synapse.storage.databases.main.events_worker import EventRedactBehaviour
-from synapse.types import JsonDict, StrCollection, get_domain_from_id
+from synapse.types import JsonDict, Requester, StrCollection, get_domain_from_id
 from synapse.types.state import StateFilter
 from synapse.util.async_helpers import Linearizer
 from synapse.util.retryutils import NotRetryingDestination
@@ -577,7 +577,12 @@ class FederationHandler:
         return list(auth)
 
     async def do_invite_join(
-        self, target_hosts: Iterable[str], room_id: str, joinee: str, content: JsonDict
+        self,
+        target_hosts: Iterable[str],
+        room_id: str,
+        joinee: str,
+        content: JsonDict,
+        requester: Optional[Requester] = None,
     ) -> Tuple[str, int]:
         """Attempts to join the `joinee` to the room `room_id` via the
         servers contained in `target_hosts`.
@@ -759,6 +764,8 @@ class FederationHandler:
                             initial_destination=origin,
                             other_destinations=ret.servers_in_room,
                             room_id=room_id,
+                            join_event=event,
+                            requester=requester,
                         )
 
             # We wait here until this instance has seen the events come down
@@ -1800,6 +1807,8 @@ class FederationHandler:
         initial_destination: Optional[str],
         other_destinations: AbstractSet[str],
         room_id: str,
+        join_event: Optional[EventBase] = None,
+        requester: Optional[Requester] = None,
     ) -> None:
         """Starts the background process to resync the state of a partial state room,
         if it is not already running.
@@ -1847,6 +1856,8 @@ class FederationHandler:
                     initial_destination=initial_destination,
                     other_destinations=other_destinations,
                     room_id=room_id,
+                    join_event=join_event,
+                    requester=requester,
                 )
             finally:
                 # Read the room's partial state flag while we still hold the claim to
@@ -1871,6 +1882,8 @@ class FederationHandler:
                             initial_destination=restart_initial_destination,
                             other_destinations=restart_other_destinations,
                             room_id=room_id,
+                            join_event=join_event,
+                            requester=requester,
                         )
 
         run_as_background_process(
@@ -1882,6 +1895,8 @@ class FederationHandler:
         initial_destination: Optional[str],
         other_destinations: AbstractSet[str],
         room_id: str,
+        join_event: Optional[EventBase] = None,
+        requester: Optional[Requester] = None,
     ) -> None:
         """Background process to resync the state of a partial-state room
 
@@ -2000,8 +2015,40 @@ class FederationHandler:
                                 destination,
                                 e,
                             )
-                            # TODO: We should `record_event_failed_pull_attempt` here,
-                            #   see https://github.com/matrix-org/synapse/issues/13700
+                            # if we have a join event and a requester generate out of band leave event
+                            # because room is borked
+                            if join_event and requester:
+                                # do this here to avoid cyclical import
+                                room_handler = self.hs.get_room_member_handler()
+                                await room_handler._generate_local_out_of_band_leave(
+                                    join_event, None, requester, {}
+                                )
+                                # log that you are booting user from room
+                                logger.error(
+                                    f"Leaving broken partial-state room {room_id}."
+                                )
+
+                                # update the state of the room
+                                await self.state_handler.update_current_state(room_id)
+
+                                # clear the room from the partial state room table and from active syncs
+                                # todo: this is kind of nuclear, a: what about caches and b: is there a
+                                # cleaner way to do it:
+                                await self.store.db_pool.simple_delete(
+                                    table="partial_state_rooms_servers",
+                                    keyvalues={"room_id": room_id},
+                                    desc="delete room from partial_state_rooms_servers",
+                                )
+                                await self.store.db_pool.simple_delete(
+                                    table="partial_state_rooms",
+                                    keyvalues={"room_id": room_id},
+                                    desc="delete room from partial_state_rooms",
+                                )
+                                self._active_partial_state_syncs.remove(room_id)
+
+                            await self.store.record_event_failed_pull_attempt(
+                                room_id, event.event_id, str(e)
+                            )
                             raise
 
                         # Try the next remote server.

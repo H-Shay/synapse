@@ -1807,7 +1807,7 @@ class RoomMemberMasterHandler(RoomMemberHandler):
         # that we are allowed to join when we decide whether or not we
         # need to do the invite/join dance.
         event_id, stream_id = await self.federation_handler.do_invite_join(
-            remote_room_hosts, room_id, user.to_string(), content
+            remote_room_hosts, room_id, user.to_string(), content, requester
         )
 
         # Check the room we just joined wasn't too large, if we didn't fetch the
