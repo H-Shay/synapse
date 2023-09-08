@@ -23,11 +23,13 @@ from synapse.api.constants import EventTypes
 from synapse.api.errors import (
     AuthError,
     Codes,
+    FederationError,
     LimitExceededError,
     NotFoundError,
     SynapseError,
 )
 from synapse.api.room_versions import RoomVersions
+from synapse.crypto.event_signing import add_hashes_and_signatures
 from synapse.events import EventBase, make_event_from_dict
 from synapse.federation.federation_base import event_from_pdu_json
 from synapse.federation.federation_client import SendJoinResult
@@ -36,6 +38,7 @@ from synapse.rest import admin
 from synapse.rest.client import login, room
 from synapse.server import HomeServer
 from synapse.storage.databases.main.events_worker import EventCacheEntry
+from synapse.types import Requester, create_requester
 from synapse.util import Clock
 from synapse.util.stringutils import random_string
 
@@ -565,6 +568,12 @@ class EventFromPduTestCase(TestCase):
 
 
 class PartialJoinTestCase(unittest.FederatingHomeserverTestCase):
+    servlets = [
+        admin.register_servlets,
+        login.register_servlets,
+        room.register_servlets,
+    ]
+
     def test_failed_partial_join_is_clean(self) -> None:
         """
         Tests that, when failing to partial-join a room, we don't get stuck with
@@ -691,6 +700,8 @@ class PartialJoinTestCase(unittest.FederatingHomeserverTestCase):
             initial_destination: Optional[str],
             other_destinations: Collection[str],
             room_id: str,
+            join_event: Optional[EventBase],
+            requester: Optional[Requester],
         ) -> None:
             nonlocal end_sync
             try:
@@ -743,6 +754,8 @@ class PartialJoinTestCase(unittest.FederatingHomeserverTestCase):
             initial_destination: Optional[str],
             other_destinations: Collection[str],
             room_id: str,
+            join_event: Optional[EventBase] = None,
+            requester: Optional[Requester] = None,
         ) -> None:
             nonlocal end_sync
             try:
@@ -784,4 +797,166 @@ class PartialJoinTestCase(unittest.FederatingHomeserverTestCase):
                 initial_destination="hs3",
                 other_destinations={"hs2"},
                 room_id="room_id",
+                join_event=None,
+                requester=None,
             )
+
+    def test_partial_state_room_sync_bail_out(self) -> None:
+        """
+        Tests that partial state sync that totally fails causes the user to leave the room
+        """
+        user = self.register_user("alice", "pass")
+        self.login(user, "pass")
+        requester = create_requester(user)
+
+        fed_handler = self.hs.get_federation_handler()
+        fed_event_handler = self.hs.get_federation_event_handler()
+        fed_client = fed_handler.federation_client
+
+        # create a fake room and auth chain to mock out remote join
+        room_id = "!room:other.example.com"
+        create_dict = {
+            "room_id": room_id,
+            "type": "m.room.create",
+            "sender": "@kristina:other.example.com",
+            "state_key": "",
+            "depth": 0,
+            "content": {"creator": "@kristina:other.example.com", "room_version": "10"},
+            "auth_events": [],
+            "prev_events": [],
+            "origin_server_ts": 1,
+        }
+
+        signed_create = self.add_hashes_and_signatures_from_other_server(
+            create_dict, RoomVersions.V10
+        )
+
+        EVENT_CREATE = make_event_from_dict(
+            signed_create,
+            room_version=RoomVersions.V10,
+        )
+
+        event_creator_dict = {
+            "room_id": room_id,
+            "type": "m.room.member",
+            "sender": "@kristina:other.example.com",
+            "state_key": "@kristina:other.example.com",
+            "content": {"membership": "join"},
+            "depth": 1,
+            "prev_events": [EVENT_CREATE.event_id],
+            "auth_events": [EVENT_CREATE.event_id],
+            "origin_server_ts": 1,
+        }
+        signed_creator = self.add_hashes_and_signatures_from_other_server(
+            event_creator_dict, RoomVersions.V10
+        )
+        EVENT_CREATOR_MEMBERSHIP = make_event_from_dict(
+            signed_creator,
+            room_version=RoomVersions.V10,
+        )
+
+        event_invitation_dict = {
+            "room_id": room_id,
+            "type": "m.room.member",
+            "sender": "@kristina:other.example.com",
+            "state_key": "@alice:test",
+            "content": {"membership": "invite"},
+            "depth": 2,
+            "prev_events": [EVENT_CREATOR_MEMBERSHIP.event_id],
+            "auth_events": [
+                EVENT_CREATE.event_id,
+                EVENT_CREATOR_MEMBERSHIP.event_id,
+            ],
+            "origin_server_ts": 1,
+        }
+        signed_invitation = self.add_hashes_and_signatures_from_other_server(
+            event_invitation_dict, RoomVersions.V10
+        )
+
+        EVENT_INVITATION_MEMBERSHIP = make_event_from_dict(
+            signed_invitation,
+            room_version=RoomVersions.V10,
+        )
+
+        membership_event_dict = {
+            "room_id": room_id,
+            "type": "m.room.member",
+            "sender": "@alice:test",
+            "state_key": "@alice:test",
+            "content": {"membership": "join"},
+            "prev_events": [EVENT_INVITATION_MEMBERSHIP.event_id],
+            "auth_events": [
+                EVENT_INVITATION_MEMBERSHIP.event_id,
+                EVENT_CREATE.event_id,
+            ],
+            "depth": 3,
+            "origin_server_ts": 1,
+        }
+        add_hashes_and_signatures(
+            RoomVersions.V10,
+            membership_event_dict,
+            self.hs.config.server.server_name,
+            self.hs.signing_key,
+        )
+
+        membership_event = make_event_from_dict(
+            membership_event_dict,
+            RoomVersions.V10,
+        )
+
+        mock_make_membership_event = Mock(
+            return_value=make_awaitable(
+                (
+                    "other.example.com",
+                    membership_event,
+                    RoomVersions.V10,
+                )
+            )
+        )
+        mock_send_join = Mock(
+            return_value=make_awaitable(
+                SendJoinResult(
+                    membership_event,
+                    "other.example.com",
+                    state=[
+                        EVENT_CREATE,
+                        EVENT_CREATOR_MEMBERSHIP,
+                        EVENT_INVITATION_MEMBERSHIP,
+                    ],
+                    auth_chain=[
+                        EVENT_CREATE,
+                        EVENT_CREATOR_MEMBERSHIP,
+                        EVENT_INVITATION_MEMBERSHIP,
+                    ],
+                    partial_state=True,
+                    servers_in_room={"other.example.com"},
+                )
+            )
+        )
+
+        # mock `update_state_for_partial_state_event` to return a FederationError
+        mock_update_state_for_partial_state_event = Mock(
+            side_effect=FederationError("ERROR", 500, "something broke", "stuff")
+        )
+        # mypy doesn't know we are assigning a mock here
+        fed_event_handler.update_state_for_partial_state_event = (  # type: ignore[assignment]
+            mock_update_state_for_partial_state_event
+        )
+
+        with patch.object(
+            fed_client, "make_membership_event", mock_make_membership_event
+        ), patch.object(fed_client, "send_join", mock_send_join):
+            self.get_success(
+                fed_handler.do_invite_join(
+                    ["other.example.com"], room_id, "@alice:test", {}, requester
+                )
+            )
+
+        # check that the leave event was processed
+        res = self.get_success(
+            self.hs.get_datastores().main.get_local_current_membership_for_user_in_room(
+                user, room_id
+            )
+        )
+        assert res is not None
+        self.assertEqual(res[0], "leave")
