@@ -29,6 +29,7 @@
         <link rel="stylesheet" href="docs/website_files/table-of-contents.css">
         <link rel="stylesheet" href="docs/website_files/remove-nav-buttons.css">
         <link rel="stylesheet" href="docs/website_files/indent-section-headers.css">
+        <link rel="stylesheet" href="docs/website_files/version-picker.css">
     </head>
     <body>
         <!-- Provide site root to javascript -->
@@ -104,6 +105,18 @@
                         <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
                             <i class="fa fa-search"></i>
                         </button>
+                        <div class="version-picker">
+                            <div class="dropdown">
+                                <div class="select">
+                                    <span></span>
+                                    <i class="fa fa-chevron-down"></i>
+                                </div>
+                                <input type="hidden" name="version">
+                                <ul class="dropdown-menu">
+                                    <!-- Versions will be added dynamically in version-picker.js -->
+                                </ul>
+                            </div>
+                        </div>
                     </div>
 
                     <h1 class="menu-title">Synapse</h1>
@@ -4111,12 +4124,12 @@ will not be created). Defaults to <code>None</code>.
 <li><strong>Note</strong>: The use of both <code>path</code> and <code>port</code> options for the same <code>listener</code> is not
 compatible.</li>
 <li>The <code>x_forwarded</code> option defaults to true  when using Unix sockets and can be omitted.</li>
-<li>Other options that would not make sense to use with a UNIX socket, such as 
+<li>Other options that would not make sense to use with a UNIX socket, such as
 <code>bind_addresses</code> and <code>tls</code> will be ignored and can be removed.</li>
 </ul>
 </li>
 <li><code>mode</code>: The file permissions to set on the UNIX socket. Defaults to <code>666</code></li>
-<li><strong>Note:</strong> Must be set as <code>type: http</code> (does not support <code>metrics</code> and <code>manhole</code>). 
+<li><strong>Note:</strong> Must be set as <code>type: http</code> (does not support <code>metrics</code> and <code>manhole</code>).
 Also make sure that <code>metrics</code> is not included in <code>resources</code> -&gt; <code>names</code></li>
 </ul>
 <p>Valid resource names are:</p>
@@ -4309,6 +4322,12 @@ has missed. Disabled by default.</p>
 <li>
 <p><code>notif_for_new_users</code>: Set to false to disable automatic subscription to email
 notifications for new users. Enabled by default.</p>
+</li>
+<li>
+<p><code>notif_delay_before_mail</code>: The time to wait before emailing about a notification.
+This gives the user a chance to view the message via push or an open client.
+Defaults to 10 minutes.</p>
+<p><em>New in Synapse 1.99.0.</em></p>
 </li>
 <li>
 <p><code>client_base_url</code>: Custom URL for client links within the email notifications. By default
@@ -5989,7 +6008,10 @@ Defaults to false.</p>
 <hr />
 <h3 id="sentry"><a class="header" href="#sentry"><code>sentry</code></a></h3>
 <p>Use this option to enable sentry integration. Provide the DSN assigned to you by sentry
-with the <code>dsn</code> setting.</p>
+with the <code>dsn</code> setting. </p>
+<p>An optional <code>environment</code> field can be used to specify an environment. This allows
+for log maintenance based on different environments, ensuring better organization
+and analysis..</p>
 <p>NOTE: While attempts are made to ensure that the logs don't contain
 any sensitive information, this cannot be guaranteed. By enabling
 this option the sentry server may therefore receive sensitive
@@ -5997,6 +6019,7 @@ information, and it in turn may then disseminate sensitive information
 through insecure notification channels if so configured.</p>
 <p>Example configuration:</p>
 <pre><code class="language-yaml">sentry:
+    environment: &quot;production&quot;
     dsn: &quot;...&quot;
 </code></pre>
 <hr />
@@ -6122,7 +6145,7 @@ per older versions of the Matrix specification. Defaults to false. Set to true t
 access tokens via a query parameter.</p>
 <p>**Enabling this option is considered insecure and is not recommended. **</p>
 <p>Example configuration:</p>
-<pre><code class="language-yaml">use_appservice_legacy_authorization: true 
+<pre><code class="language-yaml">use_appservice_legacy_authorization: true
 </code></pre>
 <hr />
 <h3 id="macaroon_secret_key"><a class="header" href="#macaroon_secret_key"><code>macaroon_secret_key</code></a></h3>
@@ -6808,7 +6831,7 @@ validation will fail without configuring audiences.</li>
 <li><code>enabled</code>: Defaults to true.
 Set to false to disable password authentication.
 Set to <code>only_for_reauth</code> to allow users with existing passwords to use them
-to log in and reauthenticate, whilst preventing new users from setting passwords.</li>
+to reauthenticate (not log in), whilst preventing new users from setting passwords.</li>
 <li><code>localdb_enabled</code>: Set to false to disable authentication against the local password
 database. This is ignored if <code>enabled</code> is false, and is only useful
 if you have other <code>password_providers</code>. Defaults to true.</li>
@@ -7023,15 +7046,20 @@ notices.</p>
 <li><code>system_mxid_display_name</code>: set the display name of the &quot;notices&quot; user</li>
 <li><code>system_mxid_avatar_url</code>: set the avatar for the &quot;notices&quot; user</li>
 <li><code>room_name</code>: set the room name of the server notices room</li>
+<li><code>room_avatar_url</code>: optional string. The room avatar to use for server notice rooms. If set to the empty string <code>&quot;&quot;</code>, notice rooms will not be given an avatar. Defaults to the empty string. <em>Added in Synapse 1.99.0.</em></li>
+<li><code>room_topic</code>: optional string. The topic to use for server notice rooms. If set to the empty string <code>&quot;&quot;</code>, notice rooms will not be given a topic. Defaults to the empty string.  <em>Added in Synapse 1.99.0.</em></li>
 <li><code>auto_join</code>: boolean. If true, the user will be automatically joined to the room instead of being invited.
 Defaults to false. <em>Added in Synapse 1.98.0.</em></li>
 </ul>
+<p>Note that the name, topic and avatar of existing server notice rooms will only be updated when a new notice event is sent.</p>
 <p>Example configuration:</p>
 <pre><code class="language-yaml">server_notices:
   system_mxid_localpart: notices
   system_mxid_display_name: &quot;Server Notices&quot;
-  system_mxid_avatar_url: &quot;mxc://server.com/oumMVlgDnLYFaPVkExemNVVZ&quot;
+  system_mxid_avatar_url: &quot;mxc://example.com/oumMVlgDnLYFaPVkExemNVVZ&quot;
   room_name: &quot;Server Notices&quot;
+  room_avatar_url: &quot;mxc://example.com/oumMVlgDnLYFaPVkExemNVVZ&quot;
+  room_topic: &quot;Room used by your server admin to notice you of important information&quot;
   auto_join: true
 </code></pre>
 <hr />
@@ -7049,7 +7077,7 @@ alias creation on this server.</p>
 <p>This setting is an optional list of 0 or more rules. By default, no list is
 provided, meaning that all alias creations are permitted.</p>
 <p>Otherwise, requests to create aliases are matched against each rule in order.
-The first rule that matches decides if the request is allowed or denied. If no 
+The first rule that matches decides if the request is allowed or denied. If no
 rule matches, the request is denied. In particular, this means that configuring
 an empty list of rules will deny every alias creation request.</p>
 <p>Each rule is a YAML object containing four fields, each of which is an optional string:</p>
@@ -7060,7 +7088,7 @@ an empty list of rules will deny every alias creation request.</p>
 <li><code>action</code>: either <code>allow</code> or <code>deny</code>. What to do with the request if the rule matches. Defaults to <code>allow</code>.</li>
 </ul>
 <p>Each of the glob patterns is optional, defaulting to <code>*</code> (&quot;match anything&quot;).
-Note that the patterns match against fully qualified IDs, e.g. against 
+Note that the patterns match against fully qualified IDs, e.g. against
 <code>@alice:example.com</code>, <code>#room:example.com</code> and <code>!abcdefghijk:example.com</code> instead
 of <code>alice</code>, <code>room</code> and <code>abcedgghijk</code>.</p>
 <p>Example configuration:</p>
@@ -7086,7 +7114,7 @@ alias_creation_rules:
 alias_creation_rules:
   - user_id: &quot;@bad_user:example.com&quot;
     action: deny
-    
+
   - action: allow
 </code></pre>
 <pre><code class="language-yaml"># Prevent aliases being created which point to a specific room.
@@ -7148,7 +7176,7 @@ room_list_publication_rules:
 room_list_publication_rules:
   - user_id: &quot;@bad_user:example.com&quot;
     action: deny
-    
+
   - action: allow
 </code></pre>
 <pre><code class="language-yaml"># Prevent publication of a specific room.
@@ -7491,7 +7519,7 @@ giving each worker a unique <code>worker_name</code>.</p>
 must be declared, in the same way as the <a href="usage/configuration/config_documentation.html#listeners"><code>listeners</code> option</a>
 in the shared config.</p>
 <p>Workers declared in <a href="usage/configuration/config_documentation.html#stream_writers"><code>stream_writers</code></a> and <a href="usage/configuration/config_documentation.html#instance_map"><code>instance_map</code></a>
-will need to include a <code>replication</code> listener here, in order to accept internal HTTP 
+will need to include a <code>replication</code> listener here, in order to accept internal HTTP
 requests from other workers.</p>
 <p>Example configuration:</p>
 <pre><code class="language-yaml">worker_listeners:
@@ -9414,13 +9442,15 @@ section, which should look like this:</p>
 <pre><code class="language-yaml">server_notices:
    system_mxid_localpart: server
    system_mxid_display_name: &quot;Server Notices&quot;
-   system_mxid_avatar_url: &quot;mxc://server.com/oumMVlgDnLYFaPVkExemNVVZ&quot;
+   system_mxid_avatar_url: &quot;mxc://example.com/oumMVlgDnLYFaPVkExemNVVZ&quot;
    room_name: &quot;Server Notices&quot;
+   room_avatar_url: &quot;mxc://example.com/oumMVlgDnLYFaPVkExemNVVZ&quot;
+   room_topic: &quot;Room used by your server admin to notice you of important information&quot;
    auto_join: true
 </code></pre>
 <p>The only compulsory setting is <code>system_mxid_localpart</code>, which defines the user
 id of the Server Notices user, as above. <code>room_name</code> defines the name of the
-room which will be created.</p>
+room which will be created, <code>room_avatar_url</code> its avatar and <code>room_topic</code> its topic.</p>
 <p><code>system_mxid_display_name</code> and <code>system_mxid_avatar_url</code> can be used to set the
 displayname and avatar of the Server Notices user.</p>
 <p><code>auto_join</code> will autojoin users to the notices room instead of sending an invite.</p>
@@ -19697,6 +19727,8 @@ admin@homeserver:~$ sudo --user postgres psql matrix-synapse --command 'select c
 
         <!-- Custom JS scripts -->
         <script type="text/javascript" src="docs/website_files/table-of-contents.js"></script>
+        <script type="text/javascript" src="docs/website_files/version-picker.js"></script>
+        <script type="text/javascript" src="docs/website_files/version.js"></script>
         <script type="text/javascript">
         window.addEventListener('load', function() {
             window.setTimeout(window.print, 100);
